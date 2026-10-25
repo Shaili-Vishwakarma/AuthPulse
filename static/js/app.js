@@ -1480,37 +1480,35 @@
     refreshIcons();
   }
 
-  // --- API Playground (INTERACTIVE: presets, query builder, history) ---
+  // --- API Playground (RAW API EXPLORER: chained sign-then-verify) ---
   function renderPlayground(root) {
     root.innerHTML = `
       <div class="page-intro">
-        <strong>API Playground</strong> lets you call every backend endpoint directly. Pick a scenario,
-        tweak the request, and see the raw JSON response — the same API the other pages use under the hood.
-        Use it to understand the request/response format, test edge cases, or debug.
+        <strong>API Playground</strong> is a raw API explorer. Step 1: call <code>/api/sign</code> to get a tag.
+        A "Copy to Verify" button appears. Click it to auto-fill Step 2. Then tweak any field in the verify
+        body (payload, timestamp, nonce, tag) and resend to see which check fails. Response shows green for
+        accepted, red for rejected. Click history items to restore both request and response.
       </div>
       <div class="lab-layout"><div>
       <div class="card">
-        <div class="card-title">Request Builder</div>
-        <div class="scenario-row" id="pg-scenarios">
-          <span class="scenario-chip" data-scenario="sign">${icon('pen-tool')} Sign a message</span>
-          <span class="scenario-chip" data-scenario="verify">${icon('shield-check')} Verify (valid)</span>
-          <span class="scenario-chip" data-scenario="verify-fail">${icon('x-circle')} Verify (invalid)</span>
-          <span class="scenario-chip" data-scenario="tamper">${icon('pencil')} Simulate tamper</span>
-          <span class="scenario-chip" data-scenario="replay">${icon('repeat')} Simulate replay</span>
-          <span class="scenario-chip" data-scenario="expired">${icon('clock')} Simulate expired</span>
-          <span class="scenario-chip" data-scenario="browse">${icon('list')} Browse events</span>
-          <span class="scenario-chip" data-scenario="stats">${icon('bar-chart-3')} Stats</span>
+        <div class="card-title">Request</div>
+
+        <div style="margin-bottom:12px">
+          <label class="input-label" style="margin-bottom:6px">Quick start:</label>
+          <div class="scenario-row" id="pg-quickstart">
+            <span class="scenario-chip active" data-qs="sign">${icon('pen-tool')} Step 1: Sign</span>
+            <span class="scenario-chip" data-qs="verify">${icon('shield-check')} Step 2: Verify</span>
+            <span class="scenario-chip" data-qs="browse">${icon('list')} Browse events</span>
+            <span class="scenario-chip" data-qs="stats">${icon('bar-chart-3')} Stats</span>
+          </div>
+          <div class="scenario-desc visible" id="pg-qs-desc">Step 1: Call /api/sign. The server signs your payload and returns a timestamp, nonce, and HMAC tag. After the response comes back, a "Copy to Verify" button will appear — click it to auto-fill Step 2.</div>
         </div>
-        <div class="scenario-desc" id="pg-scenario-desc"></div>
-        <div class="preset-row" id="pg-presets"></div>
+
         <div class="input-group">
           <label class="input-label" for="pg-endpoint">Endpoint</label>
           <select id="pg-endpoint" class="select">
             <option value="/api/sign">POST /api/sign</option>
             <option value="/api/verify">POST /api/verify</option>
-            <option value="/api/simulate/tamper">POST /api/simulate/tamper</option>
-            <option value="/api/simulate/replay">POST /api/simulate/replay</option>
-            <option value="/api/simulate/expired">POST /api/simulate/expired</option>
             <option value="/api/events">GET /api/events</option>
             <option value="/api/stats">GET /api/stats</option>
             <option value="/api/health">GET /api/health</option>
@@ -1519,7 +1517,7 @@
         <div class="input-group" id="pg-body-group">
           <label class="input-label" for="pg-body">Request Body (JSON)</label>
           <textarea id="pg-body" class="code-input" spellcheck="false">{
-  "payload": { "message": "hello" }
+  "payload": { "amount": 100, "recipient": "alice" }
 }</textarea>
         </div>
         <div id="pg-query-group" style="display:none">
@@ -1529,140 +1527,72 @@
         </div>
         <div class="action-row" style="margin-top:12px">
           <button id="pg-send" class="btn btn-primary">${icon('play')} Send Request</button>
+          <button id="pg-copy-to-verify" class="btn btn-primary" disabled style="opacity:.5">${icon('arrow-right')} Copy to Verify</button>
           <button id="pg-clear-history" class="btn">${icon('trash-2')} Clear History</button>
         </div>
       </div>
     </div><div>
       <div class="card">
         <div class="card-title">Response</div>
-        <div id="pg-response" class="playground-response" style="min-height:200px">Pick a scenario above, then click "Send Request" to see the raw response.</div>
+        <div id="pg-response" class="playground-response" style="min-height:200px">Click "Send Request" to see the response here.</div>
       </div>
       <div class="card" style="margin-top:16px">
-        <div class="card-title">Request History</div>
+        <div class="card-title">Request History <span style="font-size:11px;font-weight:400;color:var(--text-tertiary)">(click to restore request + response)</span></div>
         <div id="pg-history-list"><div class="state-box" style="padding:16px">${icon('history')}<p style="font-size:12px">No requests sent yet.</p></div></div>
       </div>
     </div></div>`;
     refreshIcons();
 
-    // Declare all DOM refs first to avoid TDZ issues
     const endpointSel = document.getElementById('pg-endpoint');
     const bodyGroup = document.getElementById('pg-body-group');
     const queryGroup = document.getElementById('pg-query-group');
     const bodyTa = document.getElementById('pg-body');
+    const copyToVerifyBtn = document.getElementById('pg-copy-to-verify');
+    const respEl = document.getElementById('pg-response');
+    let lastSignResponse = null;
 
-    // Learning scenarios — these pre-fill the form so users learn by doing
-    const scenarios = {
+    const quickstarts = {
       sign: {
         endpoint: '/api/sign',
         body: '{ "payload": { "amount": 100, "recipient": "alice" } }',
-        desc: 'The /api/sign endpoint acts as a demo sender. It takes a payload, computes the HMAC-SHA256 tag using the server-side secret, and returns the tag + timestamp + nonce. The secret never appears in the response. This response will be "accepted" because it is just signing — no verification happens here.',
+        desc: 'Step 1: Call /api/sign. The server signs your payload and returns a timestamp, nonce, and HMAC tag. After the response comes back, the "Copy to Verify" button becomes active — click it to auto-fill Step 2.',
       },
-      'verify-valid': {
+      verify: {
         endpoint: '/api/verify',
-        body: '{ "payload": { "amount": 100, "recipient": "alice" }, "timestamp": 0, "nonce": "temp", "tag": "temp" }',
-        desc: 'The /api/verify endpoint runs the full 3-check pipeline. This scenario has placeholder values — you need to first call /api/sign, then copy the returned timestamp, nonce, and tag into this body. When all three match, the response is "accepted". If any field is wrong, you will see which check failed.',
-      },
-      'verify-fail': {
-        endpoint: '/api/verify',
-        body: '{ "payload": { "amount": 100, "recipient": "alice" }, "timestamp": 0, "nonce": "test-nonce", "tag": "0000000000000000000000000000000000000000000000000000000000000000" }',
-        desc: 'This scenario uses a deliberately fake tag (all zeros). The HMAC check will FAIL because the computed tag will not match. The response should be "rejected" with reason "tamper". This proves the HMAC check catches forged tags.',
-      },
-      tamper: {
-        endpoint: '/api/simulate/tamper',
-        body: '{ "payload": { "amount": 500, "recipient": "bob" } }',
-        desc: 'This endpoint signs a payload, tampers it (modifies a value), then verifies the tampered version. The response should be "rejected" with reason "tamper" — the HMAC check fails because the tag was computed over the original payload, not the tampered one.',
-      },
-      replay: {
-        endpoint: '/api/simulate/replay',
-        body: '{ "payload": { "action": "transfer", "amount": 999 } }',
-        desc: 'This endpoint sends the same signed message twice. The first attempt response should be "accepted", the second should be "rejected" with reason "replay" — the nonce uniqueness check fails because the same nonce was already used.',
-      },
-      expired: {
-        endpoint: '/api/simulate/expired',
-        body: '{ "payload": { "action": "ping" } }',
-        desc: 'This endpoint signs with a timestamp 120 seconds in the past, then verifies. The response should be "rejected" with reason "expired" — the HMAC passes (the tag is valid) but the timestamp window check fails because the message is too old.',
+        body: '{\n  "payload": { "amount": 100, "recipient": "alice" },\n  "timestamp": 0,\n  "nonce": "PASTE_FROM_SIGN",\n  "tag": "PASTE_FROM_SIGN"\n}',
+        desc: 'Step 2: Call /api/verify with the values from /api/sign. Use the "Copy to Verify" button after Step 1 to auto-fill this. If all values match, result is "accepted" (green). Change any field and resend to see it rejected (red) with the specific check that failed.',
       },
       browse: {
         endpoint: '/api/events',
         body: null,
         params: [{ key: 'page', value: '1' }, { key: 'page_size', value: '10' }],
-        desc: 'The /api/events endpoint returns all verification attempts. Add query params like result=rejected or reason=tamper to filter. Try sorting with sort=timestamp&order=asc.',
+        desc: 'Browse all verification attempts. Add query params: result=accepted, result=rejected, reason=tamper, reason=replay, reason=expired, q=searchterm, sort=timestamp, order=asc.',
       },
       stats: {
         endpoint: '/api/stats',
         body: null,
         params: [],
-        desc: 'The /api/stats endpoint returns aggregate metrics: total verifications, accepted count, rejected count, and breakdown by reason (tamper, expired, replay).',
+        desc: 'Get aggregate metrics: total verifications, accepted, rejected, and breakdown by reason.',
       },
     };
 
-    document.querySelectorAll('#pg-scenarios .scenario-chip').forEach(chip => {
+    document.querySelectorAll('#pg-quickstart .scenario-chip').forEach(chip => {
       chip.addEventListener('click', () => {
-        const s = scenarios[chip.dataset.scenario];
-        if (!s) return;
-        document.querySelectorAll('#pg-scenarios .scenario-chip').forEach(c => c.classList.remove('active'));
+        const qs = quickstarts[chip.dataset.qs];
+        if (!qs) return;
+        document.querySelectorAll('#pg-quickstart .scenario-chip').forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
-        endpointSel.value = s.endpoint;
-        if (s.body !== null) {
-          bodyTa.value = s.body;
-        }
-        const descEl = document.getElementById('pg-scenario-desc');
-        descEl.textContent = s.desc;
+        endpointSel.value = qs.endpoint;
+        if (qs.body !== null) bodyTa.value = qs.body;
+        const descEl = document.getElementById('pg-qs-desc');
+        descEl.textContent = qs.desc;
         descEl.classList.add('visible');
-        if (s.params) {
-          renderQueryParams(s.params);
-        }
+        if (qs.params) renderQueryParams(qs.params);
+        // Reset copy button unless we have a sign response
+        if (chip.dataset.qs !== 'verify') updateCopyBtn();
         updateBodyVisibility();
       });
     });
-
-    const presets = {
-      '/api/sign': [
-        { label: 'Simple', body: '{ "payload": { "message": "hello" } }' },
-        { label: 'Transfer', body: '{ "payload": { "amount": 500, "recipient": "alice" } }' },
-        { label: 'With custom nonce', body: '{ "payload": { "action": "test" }, "nonce": "my-nonce-123" }' },
-      ],
-      '/api/verify': [
-        { label: 'Template', body: '{ "payload": { "message": "hello" }, "timestamp": 0, "nonce": "", "tag": "" }' },
-      ],
-      '/api/simulate/tamper': [
-        { label: 'Amount', body: '{ "payload": { "amount": 100 } }' },
-        { label: 'Multi-field', body: '{ "payload": { "amount": 100, "recipient": "bob" } }' },
-      ],
-      '/api/simulate/replay': [
-        { label: 'Transfer', body: '{ "payload": { "action": "transfer" } }' },
-      ],
-      '/api/simulate/expired': [
-        { label: 'Ping', body: '{ "payload": { "action": "ping" } }' },
-      ],
-      '/api/events': [
-        { label: 'All', body: null, params: [] },
-        { label: 'Rejected only', body: null, params: [{ key: 'result', value: 'rejected' }] },
-        { label: 'Page 1, size 5', body: null, params: [{ key: 'page', value: '1' }, { key: 'page_size', value: '5' }] },
-      ],
-      '/api/stats': [{ label: 'Default', body: null, params: [] }],
-      '/api/health': [{ label: 'Default', body: null, params: [] }],
-    };
-
-    function renderPresets() {
-      const ep = endpointSel.value;
-      const list = presets[ep] || [];
-      const presetEl = document.getElementById('pg-presets');
-      presetEl.innerHTML = list.map((p, i) => `<span class="preset-chip" data-idx="${i}">${p.label}</span>`).join('');
-      presetEl.querySelectorAll('.preset-chip').forEach((chip, i) => {
-        chip.addEventListener('click', () => {
-          const preset = list[i];
-          if (preset.body !== null) {
-            document.getElementById('pg-body').value = preset.body;
-          }
-          if (preset.params) {
-            renderQueryParams(preset.params);
-          }
-          presetEl.querySelectorAll('.preset-chip').forEach(c => c.classList.remove('active'));
-          chip.classList.add('active');
-        });
-      });
-    }
 
     function renderQueryParams(params) {
       const container = document.getElementById('pg-query-params');
@@ -1687,31 +1617,85 @@
       const isGet = endpointSel.value.startsWith('GET');
       bodyGroup.style.display = isGet ? 'none' : '';
       queryGroup.style.display = isGet ? '' : 'none';
-      renderPresets();
-      // Auto-add default params for GET
-      if (isGet && document.getElementById('pg-query-params').children.length === 0) {
-        renderQueryParams([]);
+    }
+
+    function updateCopyBtn() {
+      // Enable copy button only when we have a sign response AND current endpoint is sign
+      if (lastSignResponse && endpointSel.value === '/api/sign') {
+        copyToVerifyBtn.disabled = false;
+        copyToVerifyBtn.style.opacity = '1';
+      } else if (lastSignResponse) {
+        // Show enabled even on other endpoints if we have a sign response
+        copyToVerifyBtn.disabled = false;
+        copyToVerifyBtn.style.opacity = '1';
+      } else {
+        copyToVerifyBtn.disabled = true;
+        copyToVerifyBtn.style.opacity = '.5';
       }
     }
 
-    endpointSel.addEventListener('change', updateBodyVisibility);
+    endpointSel.addEventListener('change', () => { updateBodyVisibility(); updateCopyBtn(); });
     document.getElementById('pg-add-param').addEventListener('click', () => addQueryParamRow('', ''));
     updateBodyVisibility();
+    updateCopyBtn();
+
+    // Render response with green/red coloring based on result
+    function renderResponse(method, url, elapsed, data, error) {
+      if (error) {
+        respEl.innerHTML = `<div class="pg-status-line">
+          <span class="pg-status-code error">${method}</span>
+          <span style="font-family:var(--font-mono);font-size:11px">${escapeHtml(url)}</span>
+          <span style="color:var(--red);font-size:11px">ERROR</span>
+        </div>`;
+        const bodyEl = document.createElement('div');
+        bodyEl.className = 'pg-response-block';
+        bodyEl.style.borderColor = 'var(--red)';
+        bodyEl.style.background = 'var(--red-bg)';
+        bodyEl.textContent = 'Error: ' + error;
+        respEl.appendChild(bodyEl);
+        return;
+      }
+
+      // Determine if accepted or rejected
+      let resultColor = 'ok';
+      let resultText = method + ' OK';
+      if (data.result === 'accepted') { resultColor = 'ok'; resultText = 'ACCEPTED'; }
+      else if (data.result === 'rejected') { resultColor = 'error'; resultText = 'REJECTED'; }
+      else if (data.first_attempt) {
+        // Replay response has nested results
+        resultColor = data.first_attempt.result === 'accepted' ? 'ok' : 'error';
+        resultText = data.first_attempt.result === 'accepted' ? '1st: ACCEPTED' : '1st: REJECTED';
+      }
+
+      respEl.innerHTML = `<div class="pg-status-line">
+        <span class="pg-status-code ${resultColor}">${resultText}</span>
+        <span style="font-family:var(--font-mono);font-size:11px">${escapeHtml(url)}</span>
+        <span style="color:var(--text-tertiary);font-size:11px">${elapsed}ms</span>
+      </div>`;
+      const bodyEl = document.createElement('div');
+      bodyEl.className = 'pg-response-block';
+      if (data.result === 'rejected') {
+        bodyEl.style.borderColor = 'var(--red)';
+        bodyEl.style.background = 'var(--red-bg)';
+      } else if (data.result === 'accepted') {
+        bodyEl.style.borderColor = 'var(--green)';
+        bodyEl.style.background = 'var(--green-bg)';
+      }
+      bodyEl.textContent = JSON.stringify(data, null, 2);
+      respEl.appendChild(bodyEl);
+    }
 
     document.getElementById('pg-send').addEventListener('click', async () => {
-      const respEl = document.getElementById('pg-response');
       respEl.textContent = 'Sending…';
       const ep = endpointSel.value;
       const method = ep.startsWith('GET') ? 'GET' : 'POST';
-
       let url = ep;
       let body = null;
 
       if (method === 'POST') {
-        try { body = JSON.parse(document.getElementById('pg-body').value); }
+        try { body = JSON.parse(bodyTa.value); }
         catch (e) { respEl.textContent = 'Invalid JSON: ' + e.message; return; }
       } else {
-        // Collect query params
         const params = [];
         document.querySelectorAll('.query-param-row').forEach(row => {
           const k = row.querySelector('.qp-key').value.trim();
@@ -1725,31 +1709,46 @@
       try {
         const data = await api(url, method, body);
         const elapsed = Date.now() - startTime;
-        const jsonStr = JSON.stringify(data, null, 2);
-        const statusClass = 'ok';
-        respEl.innerHTML = `<div class="pg-status-line">
-          <span class="pg-status-code ${statusClass}">${method}</span>
-          <span style="font-family:var(--font-mono);font-size:11px">${escapeHtml(url)}</span>
-          <span style="color:var(--text-tertiary);font-size:11px">${elapsed}ms</span>
-        </div>`;
-        const bodyEl = document.createElement('div');
-        bodyEl.className = 'pg-response-block';
-        bodyEl.textContent = jsonStr;
-        respEl.appendChild(bodyEl);
-        pgHistory.unshift({ method, url, time: new Date().toLocaleTimeString(), status: 'ok' });
+
+        // If this was a sign response, save for chaining and enable copy button
+        if (ep === '/api/sign' && data.tag) {
+          lastSignResponse = data;
+          updateCopyBtn();
+        }
+
+        renderResponse(method, url, elapsed, data, null);
+        pgHistory.unshift({ method, url, time: new Date().toLocaleTimeString(), status: 'ok', response: data, requestBody: method === 'POST' ? bodyTa.value : null });
       } catch (e) {
-        respEl.innerHTML = `<div class="pg-status-line">
-          <span class="pg-status-code error">${method}</span>
-          <span style="font-family:var(--font-mono);font-size:11px">${escapeHtml(url)}</span>
-          <span style="color:var(--red);font-size:11px">ERROR</span>
-        </div>`;
-        const bodyEl = document.createElement('div');
-        bodyEl.className = 'pg-response-block';
-        bodyEl.textContent = 'Error: ' + e.message;
-        respEl.appendChild(bodyEl);
-        pgHistory.unshift({ method, url, time: new Date().toLocaleTimeString(), status: 'error' });
+        renderResponse(method, url, Date.now() - startTime, null, e.message);
+        pgHistory.unshift({ method, url, time: new Date().toLocaleTimeString(), status: 'error', requestBody: method === 'POST' ? bodyTa.value : null });
       }
       renderHistory();
+    });
+
+    // Chain: copy sign response into verify body
+    copyToVerifyBtn.addEventListener('click', () => {
+      if (!lastSignResponse) { showToast('Send a /api/sign request first', 'error'); return; }
+      // Switch to verify
+      endpointSel.value = '/api/verify';
+      // Highlight Step 2 chip
+      document.querySelectorAll('#pg-quickstart .scenario-chip').forEach(c => c.classList.remove('active'));
+      document.querySelector('#pg-quickstart [data-qs="verify"]').classList.add('active');
+      // Fill the verify body with sign response values
+      const verifyBody = {
+        payload: lastSignResponse.payload,
+        timestamp: lastSignResponse.timestamp,
+        nonce: lastSignResponse.nonce,
+        tag: lastSignResponse.tag,
+      };
+      bodyTa.value = JSON.stringify(verifyBody, null, 2);
+      // Update description
+      const descEl = document.getElementById('pg-qs-desc');
+      descEl.textContent = quickstarts.verify.desc;
+      updateBodyVisibility();
+      updateCopyBtn();
+      showToast('Values copied to /api/verify — click Send Request to verify', 'success');
+      // Scroll to send button
+      document.getElementById('pg-send').scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
 
     function renderHistory() {
@@ -1759,19 +1758,52 @@
         refreshIcons();
         return;
       }
-      list.innerHTML = pgHistory.slice(0, 10).map(h => `
-        <div class="history-item" data-url="${escapeAttr(h.url)}" data-method="${h.method}">
+      list.innerHTML = pgHistory.slice(0, 10).map((h, i) => {
+        // Show result badge if we have a response
+        let badge = '';
+        if (h.response) {
+          if (h.response.result === 'accepted') badge = '<span class="badge badge-accepted" style="margin-left:4px">Accepted</span>';
+          else if (h.response.result === 'rejected') badge = '<span class="badge badge-rejected" style="margin-left:4px">Rejected</span>';
+        }
+        if (h.status === 'error') badge = '<span class="badge badge-rejected" style="margin-left:4px">Error</span>';
+        return `
+        <div class="history-item" data-idx="${i}" style="flex-wrap:wrap">
           <span class="method-badge ${h.method}">${h.method}</span>
           <span style="font-family:var(--font-mono);font-size:11px">${escapeHtml(h.url)}</span>
+          ${badge}
           <span class="time">${h.time}</span>
-        </div>`).join('');
+        </div>`;
+      }).join('');
       list.querySelectorAll('.history-item').forEach(item => {
         item.addEventListener('click', () => {
-          const url = item.dataset.url;
-          // Set the endpoint selector
+          const h = pgHistory[parseInt(item.dataset.idx)];
+          if (!h) return;
+          // Restore endpoint
           for (const opt of endpointSel.options) {
-            if (url.startsWith(opt.value)) { endpointSel.value = opt.value; updateBodyVisibility(); break; }
+            if (h.url.startsWith(opt.value)) { endpointSel.value = opt.value; break; }
           }
+          // Restore request body
+          if (h.requestBody) {
+            bodyTa.value = h.requestBody;
+          }
+          // Restore query params from URL
+          if (h.url.includes('?')) {
+            const qs = h.url.split('?')[1];
+            const params = [];
+            qs.split('&').forEach(pair => {
+              const [k, v] = pair.split('=');
+              params.push({ key: k, value: decodeURIComponent(v || '') });
+            });
+            renderQueryParams(params);
+          }
+          // Show the response that was saved
+          if (h.response) {
+            renderResponse(h.method, h.url, 0, h.response, null);
+          } else {
+            renderResponse(h.method, h.url, 0, null, 'No response saved');
+          }
+          updateBodyVisibility();
+          updateCopyBtn();
         });
       });
       refreshIcons();
