@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AuthPulse — HMAC Message Authentication</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside id="sidebar" class="sidebar" role="navigation" aria-label="Main navigation">
+    <div class="sidebar-header">
+      <div class="logo">
+        <i data-lucide="shield-check" aria-hidden="true"></i>
+        <span>AuthPulse</span>
+      </div>
+      <button id="sidebar-close" class="icon-btn sidebar-close" aria-label="Close menu">
+        <i data-lucide="x" aria-hidden="true"></i>
+      </button>
+    </div>
+    <nav class="nav-list">
+      <a href="#overview" class="nav-item active" data-page="overview">
+        <i data-lucide="layout-dashboard" aria-hidden="true"></i>
+        <span>Overview</span>
+      </a>
+      <a href="#message-lab" class="nav-item" data-page="message-lab">
+        <i data-lucide="flask-conical" aria-hidden="true"></i>
+        <span>Message Lab</span>
+      </a>
+      <a href="#attack-simulator" class="nav-item" data-page="attack-simulator">
+        <i data-lucide="siren" aria-hidden="true"></i>
+        <span>Attack Simulator</span>
+      </a>
+      <a href="#logs" class="nav-item" data-page="logs">
+        <i data-lucide="scroll-text" aria-hidden="true"></i>
+        <span>Verification Logs</span>
+      </a>
+      <a href="#playground" class="nav-item" data-page="playground">
+        <i data-lucide="terminal" aria-hidden="true"></i>
+        <span>API Playground</span>
+      </a>
+      <a href="#how-it-works" class="nav-item" data-page="how-it-works">
+        <i data-lucide="book-open" aria-hidden="true"></i>
+        <span>How It Works</span>
+      </a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="health-badge" id="health-badge">
+        <span class="health-dot"></span>
+        <span id="health-text">Checking…</span>
+      </div>
+    </div>
+  </aside>
+  <div id="sidebar-overlay" class="sidebar-overlay" aria-hidden="true"></div>
+
+  <!-- Main content -->
+  <main id="main" class="main">
+    <header class="topbar">
+      <button id="menu-toggle" class="icon-btn menu-toggle" aria-label="Open menu">
+        <i data-lucide="menu" aria-hidden="true"></i>
+      </button>
+      <h1 id="page-title">Overview</h1>
+    </header>
+    <div id="page-content" class="page-content"></div>
+  </main>
+
+  <!-- Toast container -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
